@@ -1,0 +1,28 @@
+# Secrets and environment
+.env
+*.env
+*.key
+id_*
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+
+# Media and data
+data/
+*.mp4
+*.mp3
+*.wav
+*.png
+*.jpg
+*.jpeg
+
+# Dependencies and binaries
+node_modules/
+*.exe
