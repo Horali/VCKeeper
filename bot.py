@@ -16,7 +16,7 @@ except ImportError:
 TOKEN = os.environ["DISCORD_TOKEN"]
 CHANNEL_ID = int(os.environ["VOICE_CHANNEL_ID"])
 CHAT_CHANNEL_ID = int(os.environ["CHAT_CHANNEL_ID"])
-PORT = int(os.environ.get("PORT", "8000"))
+PORT = int(os.environ.get("PORT") or os.environ.get("SERVER_PORT") or "8000")
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("vcbot")
