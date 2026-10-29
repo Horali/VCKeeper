@@ -23,6 +23,8 @@ data/
 *.jpg
 *.jpeg
 
-# Dependencies and binaries
+# State files
+reminder_state.json
+*.tmp
 node_modules/
 *.exe
