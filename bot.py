@@ -239,6 +239,11 @@ class VCBot(discord.Client):
 
     async def reminder_loop(self):
         """Hourly reminder loop waking up on the hour in UTC+7."""
+        log.info(
+            "Heartbeat reminder loop active. Target User: %s | Timezone: UTC+7 | Hours: %s",
+            REMINDER_USER_ID,
+            REMINDER_HOURS,
+        )
         # Immediate test reminder if REMINDER_TEST is set
         if REMINDER_TEST:
             log.info("REMINDER_TEST is active: sending immediate test reminder...")
@@ -253,8 +258,8 @@ class VCBot(discord.Client):
 
         while not self.is_closed():
             now_utc7 = datetime.datetime.now(TZ_UTC7)
-            # Sleep until 1 second past the start of the next hour
-            seconds_until_next_hour = 3600 - (now_utc7.minute * 60 + now_utc7.second) + 1
+            # Sleep until 5 seconds past the start of the next hour
+            seconds_until_next_hour = 3600 - (now_utc7.minute * 60 + now_utc7.second) + 5
             await asyncio.sleep(seconds_until_next_hour)
 
             try:
@@ -275,12 +280,12 @@ class VCBot(discord.Client):
 
         # If already confirmed for this cycle, do not send
         if state.get("last_confirmed_date") == cycle_date:
-            log.debug("Heartbeat already confirmed for cycle %s, skipping", cycle_date)
+            log.info("Heartbeat already confirmed for cycle %s, skipping reminder.", cycle_date)
             return
 
         # If already sent for this exact cycle and hour, do not duplicate
         if state.get("last_sent_cycle_date") == cycle_date and state.get("last_sent_hour") == hour:
-            log.debug("Reminder already sent for %s hour %d, skipping", cycle_date, hour)
+            log.info("Reminder already sent for %s at hour %d, skipping duplicate.", cycle_date, hour)
             return
 
         await self.send_reminder(cycle_date=cycle_date, hour=hour)
