@@ -35,7 +35,7 @@ A 24/7 Discord voice channel presence bot with auto-reconnect, chat triggers, an
    VOICE_CHANNEL_ID=your_voice_channel_id_here
    CHAT_CHANNEL_ID=your_chat_channel_id_here
    PORT=8000
-   REMINDER_USER_ID=371275541862678528
+   REMINDER_USER_ID=your_discord_user_id_here
    REMINDER_TEST=0
    ```
 
