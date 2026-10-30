@@ -17,7 +17,12 @@ except ImportError:
 
 TOKEN = os.environ["DISCORD_TOKEN"]
 CHANNEL_ID = int(os.environ["VOICE_CHANNEL_ID"])
-CHAT_CHANNEL_ID = int(os.environ["CHAT_CHANNEL_ID"])
+# "main" runs everything; "backup" only sits in the voice channel (no chat, no DMs)
+BOT_ROLE = os.environ.get("BOT_ROLE", "main").strip().lower()
+if BOT_ROLE not in ("main", "backup"):
+    raise SystemExit(f"BOT_ROLE must be 'main' or 'backup', got {BOT_ROLE!r}")
+EXTRAS_ENABLED = BOT_ROLE == "main"
+CHAT_CHANNEL_ID = int(os.environ["CHAT_CHANNEL_ID"]) if EXTRAS_ENABLED else 0
 PORT = int(os.environ.get("PORT") or os.environ.get("SERVER_PORT") or "8000")
 
 # Daily reminder config (UTC+7 timezone without requiring external tzdata)
@@ -130,22 +135,24 @@ class VCBot(discord.Client):
         intents = discord.Intents.default()
         intents.guilds = True
         intents.voice_states = True
-        intents.message_content = True
+        intents.message_content = EXTRAS_ENABLED  # privileged, only the main bot needs it
         super().__init__(intents=intents)
         self.lock = asyncio.Lock()
         self.watchdog_started = False
         self.reminder_started = False
 
     async def setup_hook(self):
+        if not EXTRAS_ENABLED:
+            return
         # Register the persistent view so button clicks work even after bot restarts
         self.add_view(HeartbeatReminderView(self))
 
     async def on_ready(self):
-        log.info("Logged in as %s", self.user)
+        log.info("Logged in as %s (role: %s)", self.user, BOT_ROLE)
         if not self.watchdog_started:
             self.watchdog_started = True
             self.loop.create_task(self.watchdog())
-        if not self.reminder_started:
+        if EXTRAS_ENABLED and not self.reminder_started:
             self.reminder_started = True
             self.loop.create_task(self.reminder_loop())
         try:
@@ -221,6 +228,8 @@ class VCBot(discord.Client):
                 log.exception("Reconnect failed, watchdog will retry")
 
     async def on_message(self, message: discord.Message):
+        if not EXTRAS_ENABLED:
+            return
         # Ignore messages from bots (including itself)
         if message.author.bot:
             return
