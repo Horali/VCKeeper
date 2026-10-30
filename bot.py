@@ -22,6 +22,9 @@ BOT_ROLE = os.environ.get("BOT_ROLE", "main").strip().lower()
 if BOT_ROLE not in ("main", "backup"):
     raise SystemExit(f"BOT_ROLE must be 'main' or 'backup', got {BOT_ROLE!r}")
 EXTRAS_ENABLED = BOT_ROLE == "main"
+# VOICE_MUTED=1 joins muted and deafened (Discord then sends the bot no channel audio at all).
+# The default 0 joins with mic and speaker icons on. The bot has no audio code either way.
+VOICE_MUTED = os.environ.get("VOICE_MUTED", "0").strip().lower() in ("1", "true", "yes")
 CHAT_CHANNEL_ID = int(os.environ["CHAT_CHANNEL_ID"]) if EXTRAS_ENABLED else 0
 PORT = int(os.environ.get("PORT") or os.environ.get("SERVER_PORT") or "8000")
 
@@ -197,7 +200,7 @@ class VCBot(discord.Client):
             log.info("Connecting to %s", channel.name)
             try:
                 await channel.connect(
-                    self_deaf=True, self_mute=True, reconnect=True, timeout=30
+                    self_deaf=VOICE_MUTED, self_mute=VOICE_MUTED, reconnect=True, timeout=30
                 )
             except discord.ClientException:
                 log.debug("Voice connection already in progress")
