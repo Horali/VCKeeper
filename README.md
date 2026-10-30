@@ -15,6 +15,18 @@ A 24/7 Discord voice channel presence bot with auto-reconnect, chat triggers, an
   - Optional `REMINDER_TEST=1` mode to test the reminder DM and button immediately on startup.
 - **Keep-Alive Server:** Built-in lightweight Flask health check endpoint on `/` that auto-detects `PORT` or Pterodactyl's `SERVER_PORT` for cloud hosting platforms (Kerit Cloud, Koyeb, Render).
 
+## Running one bot or two
+
+The same code runs both bots. `BOT_ROLE` picks the mode:
+
+| `BOT_ROLE` | What runs | Needed env vars | Message Content Intent |
+|---|---|---|---|
+| `main` (default) | voice presence, `hora?` reply, daily heartbeat DM | `DISCORD_TOKEN`, `VOICE_CHANNEL_ID`, `CHAT_CHANNEL_ID` | required |
+| `backup` | voice presence only | `DISCORD_TOKEN`, `VOICE_CHANNEL_ID` | not needed |
+
+Run a `backup` bot as a separate Discord application on a different host. If the main bot drops for a few
+seconds, the backup keeps the voice channel from emptying, so the channel timer is not reset.
+
 ## Setup
 
 1. **Clone the repository:**
@@ -33,16 +45,17 @@ A 24/7 Discord voice channel presence bot with auto-reconnect, chat triggers, an
    ```env
    DISCORD_TOKEN=your_bot_token_here
    VOICE_CHANNEL_ID=your_voice_channel_id_here
-   CHAT_CHANNEL_ID=your_chat_channel_id_here
    PORT=8000
+   BOT_ROLE=main
+   CHAT_CHANNEL_ID=your_chat_channel_id_here
    REMINDER_USER_ID=your_discord_user_id_here
    REMINDER_TEST=0
    ```
+   For a voice-only backup bot, set `BOT_ROLE=backup` and leave out the `main`-only variables.
 
 4. **Discord Developer Portal Settings:**
    - Under your bot application $\rightarrow$ **Bot** $\rightarrow$ **Privileged Gateway Intents**:
-     - Enable **Message Content Intent** (required for `hora?` chat triggers).
-     - Enable **Voice State Intent** (required for voice channel presence).
+     - Enable **Message Content Intent** (required for `hora?` chat triggers, `main` role only).
 
 5. **Run the bot:**
    ```bash
