@@ -27,6 +27,12 @@ The same code runs both bots. `BOT_ROLE` picks the mode:
 Run a `backup` bot as a separate Discord application on a different host. If the main bot drops for a few
 seconds, the backup keeps the voice channel from emptying, so the channel timer is not reset.
 
+### Mic and speaker icons
+
+`VOICE_MUTED=0` (default) joins with the mic and speaker icons on. `VOICE_MUTED=1` joins muted and deafened, and
+Discord then sends the bot no channel audio at all. The bot never plays, records or processes audio in either
+mode; it has no audio code.
+
 ## Setup
 
 1. **Clone the repository:**
