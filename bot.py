@@ -132,6 +132,12 @@ class ExplainError(Exception):
     pass
 
 
+def profile_name(user) -> str:
+    """The name on someone's Discord profile, not their server nickname (the owner prefers it). Same for everyone,
+    so Hora's own lines in the chat match the name the prompt gives her."""
+    return getattr(user, "global_name", None) or user.name
+
+
 def lowercase_start(answer: str, names: set, chat: str) -> str:
     """The answer follows "Yes, Hora-chan, ", so "The friend..." becomes "the friend...". A chat name, a word written
     with a capital in the chat (a name, a game), "I" or a quote keeps its capital."""
@@ -370,7 +376,7 @@ class VCBot(discord.Client):
             await message.reply("Yes, Hora-chan, reply to a message (or tell me the word) and I'll explain it.")
             return
 
-        names = {message.author.display_name}
+        names = {profile_name(message.author)}
         if target is not None:
             context, chat_names = await self.chat_context(target)
             names |= chat_names
@@ -381,7 +387,7 @@ class VCBot(discord.Client):
                     "Do not explain any other word or part of the message.")
         else:
             task = "Explain what the message means (its slang, references or joke) in plain words."
-        prompt = EXPLAIN_PROMPT.format(hora=message.author.display_name, context=context, task=task)
+        prompt = EXPLAIN_PROMPT.format(hora=profile_name(message.author), context=context, task=task)
 
         async with message.channel.typing():
             try:
@@ -399,32 +405,14 @@ class VCBot(discord.Client):
                 msgs.append(m)
         except discord.DiscordException:
             log.warning("Could not read chat history for explain context")
-        names = await self.server_names(getattr(target, "guild", None), [m.author for m in msgs])
-
         def line(m):
             said = m.content.strip() or "(no text, only an attachment or embed)"
-            return f"{names[m.author.id]}: {said[:300]}"
+            return f"{profile_name(m.author)}: {said[:300]}"
 
         recent = "\n".join(line(m) for m in reversed(msgs[1:])) or "(none)"
         text = (f"Recent chat before it, oldest first:\n\"\"\"\n{recent}\n\"\"\"\n\n"
-                f"The message to explain, from {names[target.author.id]}:\n\"\"\"\n{line(target)}\n\"\"\"")
-        return text, set(names.values())
-
-    async def server_names(self, guild, users) -> dict:
-        """user id -> the name shown in this server. Messages from history come without member data, so their
-        display_name is the profile name, not the server nickname; look each person up as a member instead."""
-        names = {}
-        for u in users:
-            if u.id in names:
-                continue
-            member = u if isinstance(u, discord.Member) or guild is None else guild.get_member(u.id)
-            if member is None:
-                try:
-                    member = await guild.fetch_member(u.id)
-                except discord.DiscordException:
-                    member = None  # left the server: keep the profile name
-            names[u.id] = (member or u).display_name
-        return names
+                f"The message to explain, from {profile_name(target.author)}:\n\"\"\"\n{line(target)}\n\"\"\"")
+        return text, {profile_name(m.author) for m in msgs}
 
     async def ask_claude(self, prompt: str) -> str:
         """Headless Claude Code -> reply text. No tools, settings or MCP, so only the prompt is sent."""
