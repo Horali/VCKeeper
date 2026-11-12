@@ -47,6 +47,7 @@ STATE_FILE = os.path.join(BASE_DIR, "reminder_state.json")
 OWNER_ID = REMINDER_USER_ID
 EXPLAIN_MODEL = os.environ.get("EXPLAIN_MODEL", "haiku")
 EXPLAIN_RE = re.compile(r"\bexplain\b", re.IGNORECASE)
+QUOTED_RE = re.compile(r"[\"“”]([^\"“”]+)[\"“”]")  # straight or curly double quotes (phones type curly ones)
 CLAUDE_DIR = os.path.join(BASE_DIR, ".claude-bin")
 CLAUDE_RELEASES = "https://downloads.claude.ai/claude-code-releases"
 claude_path = None  # set at startup by find_claude()
@@ -360,10 +361,11 @@ class VCBot(discord.Client):
             return
 
         request = re.sub(r"<@[!&]?\d+>", "", message.content).strip()  # her words without the pings
-        # what she named after "explain" ("explain the word cooked" -> "cooked"); empty = explain the whole message
-        focus = request[EXPLAIN_RE.search(request).end():]
-        focus = re.sub(r"^\s*(what\s+)?(the\s+)?((word|phrase|term)s?|meaning of)?\s*", "", focus, flags=re.IGNORECASE)
-        focus = focus.strip(" \"'?:,.")
+        after = request[EXPLAIN_RE.search(request).end():]
+        # only words in quotes narrow it down ('explain "instalment"'); other words are her question about the
+        # message ("explain what they meant"), since reading them as the thing to explain went wrong (user, 2026-11-12)
+        focus = ", ".join(q.strip() for q in QUOTED_RE.findall(after) if q.strip())
+        question = QUOTED_RE.sub("", after).strip(" ?:,.")
         target = None
         if message.reference is not None and message.reference.message_id is not None:
             target = message.reference.resolved
@@ -372,9 +374,13 @@ class VCBot(discord.Client):
                     target = await message.channel.fetch_message(message.reference.message_id)
                 except discord.DiscordException:
                     target = None
-        if target is None and not focus:
-            await message.reply("Yes, Hora-chan, reply to a message (or tell me the word) and I'll explain it.")
-            return
+        if target is None:  # nothing replied to: "explain rizz" explains the word, quoted or not
+            focus = focus or re.sub(r"^(what\s+)?(the\s+)?((word|phrase|term)s?|meaning of)\s+", "", question,
+                                    flags=re.IGNORECASE)
+            question = ""
+            if not focus:
+                await message.reply("Yes, Hora-chan, reply to a message (or tell me the word) and I'll explain it.")
+                return
 
         names = {profile_name(message.author)}
         if target is not None:
@@ -387,6 +393,8 @@ class VCBot(discord.Client):
                     "Do not explain any other word or part of the message.")
         else:
             task = "Explain what the message means (its slang, references or joke) in plain words."
+        if question:
+            task += f'\nHora also asked: "{question}". Answer that as part of the explanation.'
         prompt = EXPLAIN_PROMPT.format(hora=profile_name(message.author), context=context, task=task)
 
         async with message.channel.typing():
