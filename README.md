@@ -13,6 +13,10 @@ A 24/7 Discord voice channel presence bot with auto-reconnect, chat triggers, an
   - Interactive persistent button (**"Yes, I've done the heartbeat"**) that confirms the day, updates the message, disables the button, and stops further reminders for the cycle.
   - State persistence (`reminder_state.json`) with atomic file writes so confirmations and reminder tracking survive bot restarts.
   - Optional `REMINDER_TEST=1` mode to test the reminder DM and button immediately on startup.
+- **"Explain" (AI, owner only):** ping the bot with the word `explain` while replying to a message, and it explains
+  that message's slang or references in a few sentences (`@Horaya explain the word X` explains just X). Anyone else
+  gets "Sorry, i only serve rara". Answers come from Claude Haiku through headless Claude Code on the owner's Claude
+  plan, with no tools enabled.
 - **Keep-Alive Server:** Built-in lightweight Flask health check endpoint on `/` that auto-detects `PORT` or Pterodactyl's `SERVER_PORT` for cloud hosting platforms (Kerit Cloud, Koyeb, Render).
 
 ## Running one bot or two
@@ -32,6 +36,15 @@ seconds, the backup keeps the voice channel from emptying, so the channel timer 
 `VOICE_MUTED=0` (default) joins with the mic and speaker icons on. `VOICE_MUTED=1` joins muted and deafened, and
 Discord then sends the bot no channel audio at all. The bot never plays, records or processes audio in either
 mode; it has no audio code.
+
+### Explain feature
+
+1. On your own PC, run `claude setup-token` and copy the token it prints (it uses your Claude plan's limits).
+2. Put it in the host's `.env` as `CLAUDE_CODE_OAUTH_TOKEN=...` (main bot only).
+3. Restart. On first start the bot downloads Claude Code into `.claude-bin/` (about 330 MB of disk).
+
+Each answer runs one `claude -p` process that peaks at about 210 MB of RAM, so the main bot needs a host with
+512 MB (a 256 MB host runs out of memory). The token can spend your plan, so keep it only in `.env`.
 
 ## Setup
 
