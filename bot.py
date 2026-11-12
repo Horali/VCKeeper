@@ -51,9 +51,6 @@ CLAUDE_DIR = os.path.join(BASE_DIR, ".claude-bin")
 CLAUDE_RELEASES = "https://downloads.claude.ai/claude-code-releases"
 claude_path = None  # set at startup by find_claude()
 
-# first words lowercased after "Yes, Hora-chan, " (names and quotes keep their capital)
-COMMON_STARTS = {"the", "this", "that", "it", "it's", "its", "they", "he", "she", "so", "sounds", "basically", "a", "an",
-                 "in", "when", "someone", "people", "your", "you", "here", "there", "means"}
 EXPLAIN_CONTEXT = 8  # chat messages before the explained one, so "doing that" or an inside joke has something to go on
 EXPLAIN_PROMPT = """You explain things for Hora in a Discord group chat. People there often say a word, slang, meme, reference
 or topic she doesn't understand, and she asks you about it. In this chat she is called {hora}.
@@ -133,6 +130,16 @@ def find_claude() -> None:
 
 class ExplainError(Exception):
     pass
+
+
+def lowercase_start(answer: str, names: set, chat: str) -> str:
+    """The answer follows "Yes, Hora-chan, ", so "The friend..." becomes "the friend...". A chat name, a word written
+    with a capital in the chat (a name, a game), "I" or a quote keeps its capital."""
+    first = re.sub(r"('s|’s)$", "", answer.split(" ", 1)[0].strip(".,!?:;"))
+    keep = {n.split(" ")[0].lower() for n in names if n} | {"i", "i'm", "i'd", "i'll"}
+    if not first[:1].isupper() or first.lower() in keep or re.search(rf"\b{re.escape(first)}\b", chat):
+        return answer
+    return answer[0].lower() + answer[1:]
 
 
 def get_reminder_cycle_date(dt: datetime.datetime) -> str:
@@ -363,8 +370,10 @@ class VCBot(discord.Client):
             await message.reply("Yes, Hora-chan, reply to a message (or tell me the word) and I'll explain it.")
             return
 
+        names = {message.author.display_name}
         if target is not None:
-            context = await self.chat_context(target)
+            context, chat_names = await self.chat_context(target)
+            names |= chat_names
         else:
             context = "There is no quoted message."
         if focus:
@@ -380,26 +389,42 @@ class VCBot(discord.Client):
             except ExplainError as e:
                 await message.reply(f"Yes, Hora-chan, but I couldn't think just now ({e}).")
                 return
-        first = answer.split(" ", 1)[0]
-        if first.lower() in COMMON_STARTS and first[:1].isupper():  # "Hora-chan, The friend..." -> "the friend..."
-            answer = answer[0].lower() + answer[1:]
-        await message.reply(f"Yes, Hora-chan, {answer}"[:2000])
+        await message.reply(f"Yes, Hora-chan, {lowercase_start(answer, names, context)}"[:2000])
 
-    async def chat_context(self, target: discord.Message) -> str:
-        """The message to explain, with who said it and the few messages before it (oldest first)."""
-        def line(m):
-            said = m.content.strip() or "(no text, only an attachment or embed)"
-            return f"{m.author.display_name}: {said[:300]}"
-
-        before = []
+    async def chat_context(self, target: discord.Message) -> tuple[str, set[str]]:
+        """The message to explain, with who said it and the few messages before it (oldest first). -> (text, names)"""
+        msgs = [target]
         try:
             async for m in target.channel.history(limit=EXPLAIN_CONTEXT, before=target):
-                before.append(line(m))
+                msgs.append(m)
         except discord.DiscordException:
             log.warning("Could not read chat history for explain context")
-        recent = "\n".join(reversed(before)) or "(none)"
-        return (f"Recent chat before it, oldest first:\n\"\"\"\n{recent}\n\"\"\"\n\n"
-                f"The message to explain, from {target.author.display_name}:\n\"\"\"\n{line(target)}\n\"\"\"")
+        names = await self.server_names(getattr(target, "guild", None), [m.author for m in msgs])
+
+        def line(m):
+            said = m.content.strip() or "(no text, only an attachment or embed)"
+            return f"{names[m.author.id]}: {said[:300]}"
+
+        recent = "\n".join(line(m) for m in reversed(msgs[1:])) or "(none)"
+        text = (f"Recent chat before it, oldest first:\n\"\"\"\n{recent}\n\"\"\"\n\n"
+                f"The message to explain, from {names[target.author.id]}:\n\"\"\"\n{line(target)}\n\"\"\"")
+        return text, set(names.values())
+
+    async def server_names(self, guild, users) -> dict:
+        """user id -> the name shown in this server. Messages from history come without member data, so their
+        display_name is the profile name, not the server nickname; look each person up as a member instead."""
+        names = {}
+        for u in users:
+            if u.id in names:
+                continue
+            member = u if isinstance(u, discord.Member) or guild is None else guild.get_member(u.id)
+            if member is None:
+                try:
+                    member = await guild.fetch_member(u.id)
+                except discord.DiscordException:
+                    member = None  # left the server: keep the profile name
+            names[u.id] = (member or u).display_name
+        return names
 
     async def ask_claude(self, prompt: str) -> str:
         """Headless Claude Code -> reply text. No tools, settings or MCP, so only the prompt is sent."""
