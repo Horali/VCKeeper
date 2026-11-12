@@ -25,6 +25,7 @@ data/
 
 # State files
 reminder_state.json
+scrim_state.json
 
 # Claude Code binary the bot downloads for the explain feature
 .claude-bin/

@@ -40,6 +40,7 @@ TZ_UTC7 = datetime.timezone(datetime.timedelta(hours=7))
 REMINDER_HOURS = (19, 20, 21, 22, 23, 0)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 STATE_FILE = os.path.join(BASE_DIR, "reminder_state.json")
+SCRIM_STATE_FILE = os.path.join(BASE_DIR, "scrim_state.json")
 
 # "Explain" (main only): the owner pings Horaya with the word "explain", usually as a reply to a friend's message,
 # and Haiku answers through headless Claude Code on the owner's Claude plan (CLAUDE_CODE_OAUTH_TOKEN from
@@ -235,6 +236,7 @@ class VCBot(discord.Client):
         intents.voice_states = True
         intents.message_content = EXTRAS_ENABLED  # privileged, only the main bot needs it
         super().__init__(intents=intents)
+        self.tree = discord.app_commands.CommandTree(self)
         self.lock = asyncio.Lock()
         self.explain_lock = asyncio.Lock()  # one claude process at a time: two would not fit in a free host's RAM
         self.watchdog_started = False
@@ -245,6 +247,15 @@ class VCBot(discord.Client):
             return
         # Register the persistent view so button clicks work even after bot restarts
         self.add_view(HeartbeatReminderView(self))
+        # /scrim (imported here so the backup bot doesn't need Pillow)
+        import scrim
+
+        scrim.setup(self, self.tree, OWNER_ID, SCRIM_STATE_FILE)
+        try:
+            synced = await self.tree.sync()
+            log.info("Synced %d slash command(s)", len(synced))
+        except discord.HTTPException:
+            log.exception("Couldn't sync slash commands")
 
     async def on_ready(self):
         log.info("Logged in as %s (role: %s)", self.user, BOT_ROLE)

@@ -8,7 +8,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install -r requirements.txt
 
-COPY bot.py .
+COPY *.py ./
 
 EXPOSE 8000
 
