@@ -20,7 +20,7 @@ A 24/7 Discord voice channel presence bot with auto-reconnect, chat triggers, an
   plan, with no tools enabled.
 - **Scrim wheel (owner runs it):** `/scrim start` opens a lobby with Join/Leave buttons. `/scrim wheel` spins an
   animated wheel GIF and drops one player into Blue or Red (Blue, Red, Blue...) until both teams have 5;
-  `mode:automatic` spins on its own with 5 seconds between picks, and `mode:reroll` redoes the last pick.
+  `mode:automatic` spins on its own with 3 seconds between picks, and `mode:reroll` redoes the last pick.
   `/scrim add` and `/scrim remove` change who is in, `/scrim end` closes it. Fewer than 10 players makes uneven teams.
 - **Keep-Alive Server:** Built-in lightweight Flask health check endpoint on `/` that auto-detects `PORT` or Pterodactyl's `SERVER_PORT` for cloud hosting platforms (Kerit Cloud, Koyeb, Render).
 

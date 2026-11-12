@@ -17,7 +17,7 @@ import wheel
 log = logging.getLogger("vcbot.scrim")
 
 TEAM_SIZE = 5
-AUTO_GAP = 5  # seconds between an automatic reveal and the next spin
+AUTO_GAP = 3  # seconds between an automatic reveal and the next spin
 TEAMS = ("blue", "red")
 EMOJI = {"blue": "🔵", "red": "🔴"}
 COLOR = {"blue": discord.Color(0x2F80ED), "red": discord.Color(0xEB4D4B)}
@@ -54,6 +54,8 @@ class Scrim:
         self.last: dict | None = data.get("last")  # {"id", "team"} of the newest pick, for reroll
         self.lock = asyncio.Lock()  # held while a spin is running
         self.auto: asyncio.Task | None = None
+        self.prepared: tuple | None = None  # (key, order, winner, render task): the next spin, drawn ahead of time
+        self.prepare_timer: asyncio.Task | None = None
 
     def to_dict(self) -> dict:
         return {"guild_id": self.guild_id, "channel_id": self.channel_id, "lobby_id": self.lobby_id,
@@ -85,6 +87,10 @@ class Scrim:
         open_teams = [t for t in TEAMS if len(self.team(t)) < TEAM_SIZE]
         return min(open_teams, key=lambda t: len(self.team(t))) if open_teams else None
 
+    def spin_key(self, team: str) -> tuple:
+        """What a pre-drawn spin depends on: who's in the wheel, which team, which pick number."""
+        return tuple(sorted(p["id"] for p in self.pool)), team, self.picked() + 1
+
     def auto_running(self) -> bool:
         return self.auto is not None and not self.auto.done()
 
@@ -95,6 +101,14 @@ def mentions(players: list[dict], numbered: bool = False) -> str:
     if numbered:
         return "\n".join(f"{i}. <@{p['id']}>" for i, p in enumerate(players, 1))
     return "\n".join(f"<@{p['id']}>" for p in players)
+
+
+def teams_text(s: Scrim) -> str:
+    def side(team):
+        players = s.team(team)
+        lines = "\n".join(f"{i}. <@{p['id']}>" for i, p in enumerate(players, 1)) or "-"
+        return f"{EMOJI[team]} **{team.title()}** ({len(players)}/{TEAM_SIZE})\n{lines}"
+    return f"{side('blue')}\n\n{side('red')}"
 
 
 def board(s: Scrim) -> discord.Embed:
@@ -136,6 +150,7 @@ class LobbyView(discord.ui.View):
             return
         s.pool.append(player_from(interaction.user))
         self.manager.save()
+        self.manager.prepare_soon(s)
         await interaction.response.edit_message(embed=board(s), view=self)
 
     @discord.ui.button(label="Leave", style=discord.ButtonStyle.secondary, custom_id="scrim_leave")
@@ -148,6 +163,7 @@ class LobbyView(discord.ui.View):
             return
         s.pool = [p for p in s.pool if p["id"] != interaction.user.id]
         self.manager.save()
+        self.manager.prepare_soon(s)
         await interaction.response.edit_message(embed=board(s), view=self)
 
 
@@ -242,6 +258,7 @@ class ScrimManager:
         if s.phase == "picking" and s.next_team() is None:
             s.phase = "done"  # teams were full already: they go on the bench
         self.save()
+        self.prepare_soon(s)
         where = "the bench" if s.phase == "done" else "the wheel"
         await interaction.response.send_message(f"Added {member.mention} to {where}.",
                                                 allowed_mentions=discord.AllowedMentions.none())
@@ -266,6 +283,7 @@ class ScrimManager:
         if s.phase == "done" and s.next_team():
             s.phase = "picking"  # a slot opened up and someone is still on the bench
         self.save()
+        self.prepare_soon(s)
         place = {"pool": "the wheel", "blue": "🔵 Blue", "red": "🔴 Red"}[where]
         extra = " The next spin fills the spot." if where != "pool" and s.next_team() else ""
         await interaction.response.send_message(f"Removed {member.mention} from {place}.{extra}",
@@ -361,13 +379,47 @@ class ScrimManager:
             if ch:
                 await ch.send("The automatic draw broke. Run `/scrim wheel` to carry on.")
 
+    def prepare(self, s: Scrim) -> None:
+        """Draw the next spin in the background now, so `/scrim wheel` doesn't sit on "thinking" while it renders."""
+        team = s.next_team()
+        if team is None or len(s.pool) < 2 or s.phase == "done":
+            return
+        key = s.spin_key(team)
+        if s.prepared and s.prepared[0] == key:
+            return
+        order = s.pool[:]
+        rng.shuffle(order)  # where a name sits on the wheel says nothing
+        winner = rng.randrange(len(order))  # chosen now from exactly this wheel, so it's just as random
+        task = asyncio.create_task(asyncio.to_thread(
+            wheel.render_spin, [p["label"] for p in order], winner, team, key[2]))
+        task.add_done_callback(lambda t: t.cancelled() or t.exception())  # a failed draw is handled at spin time
+        s.prepared = (key, order, winner, task)
+
+    def prepare_soon(self, s: Scrim, delay: float = 3) -> None:
+        """Prepare once things settle (people often join a few at a time)."""
+        if s.prepare_timer and not s.prepare_timer.done():
+            s.prepare_timer.cancel()
+
+        async def later():
+            await asyncio.sleep(delay)
+            if self.scrims.get(s.guild_id) is s and not s.lock.locked():
+                self.prepare(s)
+        s.prepare_timer = asyncio.create_task(later())
+
     async def spin(self, s: Scrim, send, team: str | None = None) -> None:
         """One pick: post the spinning wheel, then reveal who it landed on and update the board."""
         async with s.lock:
             team = team or s.next_team()
-            order = s.pool[:]
-            rng.shuffle(order)  # where a name sits on the wheel says nothing
-            winner = rng.randrange(len(order))
+            key = s.spin_key(team)
+            ready = s.prepared if s.prepared and s.prepared[0] == key else None
+            s.prepared = None
+            if ready:  # drawn ahead for this exact wheel
+                _, order, winner, render = ready
+            else:
+                order = s.pool[:]
+                rng.shuffle(order)
+                winner = rng.randrange(len(order))
+                render = None
             player = order[winner]
             s.pool.remove(player)
             s.team(team).append(player)
@@ -380,23 +432,26 @@ class ScrimManager:
 
             head = f"{EMOJI[team]} Pick {pick_no}/{s.goal()} for **{team.title()}**"
             reveal = discord.Embed(color=COLOR[team], description=f"{EMOJI[team]} <@{player['id']}> joins "
-                                   f"**{team.title()}**! {rng.choice(HYPE)}")
+                                   f"**{team.title()}**! {rng.choice(HYPE)}\n\n{teams_text(s)}")
             reveal.set_thumbnail(url=player["avatar"])
-            reveal.set_footer(text=f"Blue {len(s.blue)}/{TEAM_SIZE} · Red {len(s.red)}/{TEAM_SIZE} · "
-                                   f"{len(s.pool)} left in the wheel")
-            quiet = discord.AllowedMentions.none()
+            reveal.set_footer(text=f"{len(s.pool)} left in the wheel")
+            quiet = discord.AllowedMentions.none()  # names in pick messages never ping; only the final one does
             if len(order) == 1:
                 await send(content=f"{head}: last one left, no spin needed.", embed=reveal, allowed_mentions=quiet)
             else:
-                labels = [p["label"] for p in order]
                 try:
-                    gif, png, seconds = await asyncio.to_thread(wheel.render_spin, labels, winner, team, pick_no)
+                    if render is None:
+                        render = asyncio.to_thread(wheel.render_spin, [p["label"] for p in order], winner, team,
+                                                   pick_no)
+                    gif, png, seconds = await render
                 except Exception:
                     log.exception("Wheel render failed, revealing without it")
                     await send(content=f"{head}: 🎲 rolling...", embed=reveal, allowed_mentions=quiet)
                 else:
                     # interaction followups and channel.send both hand back the message
                     msg = await send(content=f"{head} - spinning...", file=discord.File(io.BytesIO(gif), "wheel.gif"))
+                    if not done:
+                        self.prepare(s)  # draw the next spin while this one plays
                     await asyncio.sleep(seconds + 0.5)
                     # swap the GIF for a still of where it stopped, so a client that loops GIFs doesn't spin it again
                     reveal.set_image(url="attachment://wheel.png")
@@ -407,19 +462,20 @@ class ScrimManager:
         await self.refresh_board(s)
         if done:
             await self.final(s)
+        else:
+            self.prepare(s)  # no-op if it's already drawn for this wheel
 
     async def final(self, s: Scrim) -> None:
+        """The only message that pings: both teams listed, everyone picked gets a ping."""
         ch = self.channel(s)
         if ch is None:
             return
-        e = discord.Embed(title="🏁 Teams are set!", color=LOBBY_COLOR)
-        e.add_field(name="🔵 Blue", value=mentions(s.blue, True)[:1024])
-        e.add_field(name="🔴 Red", value=mentions(s.red, True)[:1024])
+        text = f"🏁 **Final teams** - GLHF!\n\n{teams_text(s)}"
         if s.pool:
-            e.add_field(name=f"Bench ({len(s.pool)})", value=mentions(s.pool)[:1024], inline=False)
-        ping = " ".join(f"<@{p['id']}>" for p in s.blue + s.red)
-        await ch.send(content=f"GLHF! {ping}", embed=e,
-                      allowed_mentions=discord.AllowedMentions(users=True, roles=False, everyone=False))
+            text += "\n\n🪑 **Bench**: " + " ".join(f"<@{p['id']}>" for p in s.pool)
+        picked = [discord.Object(p["id"]) for p in s.blue + s.red]
+        await ch.send(content=text[:2000],
+                      allowed_mentions=discord.AllowedMentions(users=picked, roles=False, everyone=False))
 
 
 def setup(client: discord.Client, tree: app_commands.CommandTree, owner_id: int, state_file: str) -> ScrimManager:
