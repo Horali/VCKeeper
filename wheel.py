@@ -96,12 +96,20 @@ def _overlay(team: str, pick_no: int) -> Image.Image:
     return o
 
 
+def _flat(wheel: Image.Image) -> Image.Image:
+    """The wheel on a solid square of background, so frames can rotate plain RGB (much faster than RGBA)."""
+    sq = Image.new("RGB", wheel.size, BG)
+    sq.paste(wheel, (0, 0), wheel)
+    return sq
+
+
 def _frame(base, wheel, top, angle) -> Image.Image:
     im = base.copy()
-    r = wheel.rotate(-angle, resample=Image.BICUBIC)
-    im.alpha_composite(r, (CX - r.width // 2, CY - r.height // 2))
-    im.alpha_composite(top)
-    return im.convert("RGB")
+    # the corners a rotation uncovers get the background colour, and the round wheel never leaves its square
+    r = wheel.rotate(-angle, resample=Image.BILINEAR, fillcolor=BG)
+    im.paste(r, (CX - r.width // 2, CY - r.height // 2))
+    im.paste(top, (0, 0), top)
+    return im
 
 
 def render_spin(labels: list[str], winner: int, team: str, pick_no: int,
@@ -123,9 +131,28 @@ def render_spin(labels: list[str], winner: int, team: str, pick_no: int,
     start = rng.uniform(0, 360)
     total = rng.randint(4, 6) * 360 + ((-land - start) % 360)
 
-    wheel = _wheel(labels)
+    wheel = _flat(_wheel(labels))
     top = _overlay(team, pick_no)
-    base = Image.new("RGBA", (SIZE, SIZE), BG)
+    base = Image.new("RGB", (SIZE, SIZE), BG)
+    palette = _frame(base, wheel, top, start).quantize(colors=96, method=Image.Quantize.MEDIANCUT)
+
+    def quantize(im):
+        return im.quantize(palette=palette, dither=Image.Dither.NONE)
+
+    # fast frames: rotate the already-quantized wheel with nearest-neighbour (no smoothing, no per-frame
+    # colour matching). At that speed nobody sees the rough edges; the slow end is drawn smooth.
+    wheel_p, base_p, top_p = quantize(wheel), quantize(base), quantize(Image.alpha_composite(
+        Image.new("RGBA", (SIZE, SIZE), BG), top).convert("RGB"))
+    bg_index = base_p.getpixel((0, 0))
+    top_mask = top.getchannel("A").point(lambda a: 255 if a > 127 else 0)
+
+    def fast_frame(angle):
+        im = base_p.copy()
+        r = wheel_p.rotate(-angle, resample=Image.NEAREST, fillcolor=bg_index)
+        im.paste(r, (CX - r.width // 2, CY - r.height // 2))
+        im.paste(top_p, (0, 0), top_mask)
+        return im
+
     frames, durations = [], []
     step_ms = 1000 // FPS
     steps = int(seconds * FPS)
@@ -136,17 +163,17 @@ def render_spin(labels: list[str], winner: int, team: str, pick_no: int,
         if last is not None and rot - last < 0.6 and k != steps:
             durations[-1] += step_ms  # it barely moved: show the last frame longer instead (smaller file)
             continue
-        frames.append(_frame(base, wheel, top, start + rot))
+        fast = last is not None and rot - last > 6
+        frames.append(fast_frame(start + rot) if fast else quantize(_frame(base, wheel, top, start + rot)))
         durations.append(step_ms)
         last = rot
-    still = _frame(base, _wheel(labels, lit=winner), top, start + total)
-    frames.append(still)
+    still = _frame(base, _flat(_wheel(labels, lit=winner)), top, start + total)
+    frames.append(quantize(still))
     durations.append(600_000)  # hold the result for 10 minutes in case a client loops the GIF anyway
 
-    palette = frames[len(frames) // 2].quantize(colors=96, method=Image.Quantize.MEDIANCUT)
-    quantized = [f.quantize(palette=palette, dither=Image.Dither.NONE) for f in frames]
+    quantized = frames
     gif = io.BytesIO()
     quantized[0].save(gif, format="GIF", save_all=True, append_images=quantized[1:], duration=durations, loop=0)
     png = io.BytesIO()
-    still.save(png, format="PNG", optimize=True)
+    still.save(png, format="PNG")
     return gif.getvalue(), png.getvalue(), sum(durations[:-1]) / 1000
