@@ -14,7 +14,8 @@ A 24/7 Discord voice channel presence bot with auto-reconnect, chat triggers, an
   - State persistence (`reminder_state.json`) with atomic file writes so confirmations and reminder tracking survive bot restarts.
   - Optional `REMINDER_TEST=1` mode to test the reminder DM and button immediately on startup.
 - **"Explain" (AI, owner only):** ping the bot with the word `explain` while replying to a message, and it explains
-  that message's slang or references in a few sentences (`@Horaya explain the word X` explains just X). Anyone else
+  that message's slang or references in a few sentences. Put a word in quotes (`@Horaya explain "instalment"`) to explain
+  just that word; any other words after `explain` are a question about the message ("explain what they meant"). Anyone else
   gets "Sorry, i only serve rara". Answers come from Claude Haiku through headless Claude Code on the owner's Claude
   plan, with no tools enabled.
 - **Keep-Alive Server:** Built-in lightweight Flask health check endpoint on `/` that auto-detects `PORT` or Pterodactyl's `SERVER_PORT` for cloud hosting platforms (Kerit Cloud, Koyeb, Render).
