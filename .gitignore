@@ -25,6 +25,9 @@ data/
 
 # State files
 reminder_state.json
+
+# Claude Code binary the bot downloads for the explain feature
+.claude-bin/
 *.tmp
 node_modules/
 *.exe
