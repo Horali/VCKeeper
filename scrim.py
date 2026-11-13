@@ -151,7 +151,6 @@ class LobbyView(discord.ui.View):
             return
         s.pool.append(player_from(interaction.user))
         self.manager.save()
-        self.manager.prepare_soon(s)
         await interaction.response.edit_message(embed=board(s), view=self)
 
     @discord.ui.button(label="Leave", style=discord.ButtonStyle.secondary, custom_id="scrim_leave")
@@ -164,7 +163,6 @@ class LobbyView(discord.ui.View):
             return
         s.pool = [p for p in s.pool if p["id"] != interaction.user.id]
         self.manager.save()
-        self.manager.prepare_soon(s)
         await interaction.response.edit_message(embed=board(s), view=self)
 
 
