@@ -54,6 +54,7 @@ class Scrim:
         self.last: dict | None = data.get("last")  # {"id", "team"} of the newest pick, for reroll
         self.lock = asyncio.Lock()  # held while a spin is running
         self.auto: asyncio.Task | None = None
+        self.pausing = False  # set by /scrim wheel mode:pause; the automatic draw stops before its next spin
         self.prepared: tuple | None = None  # (key, order, winner, render task): the next spin, drawn ahead of time
         self.prepare_timer: asyncio.Task | None = None
 
@@ -316,9 +317,21 @@ class ScrimManager:
         s = await self.active(interaction)
         if s is None:
             return
+        if mode == "pause":
+            if not s.auto_running():
+                await interaction.response.send_message("No automatic draw is running.", ephemeral=True)
+            elif s.pausing:
+                await interaction.response.send_message("It's already pausing.", ephemeral=True)
+            else:
+                s.pausing = True  # the draw stops before its next spin; one already spinning finishes first
+                await interaction.response.send_message(
+                    "⏸️ Automatic draw paused. Spin yourself with `/scrim wheel`, or resume with "
+                    "`/scrim wheel mode:continue`.")
+            return
         if s.auto_running():
-            await interaction.response.send_message("An automatic draw is running. `/scrim end` stops it.",
-                                                    ephemeral=True)
+            await interaction.response.send_message(
+                "An automatic draw is running. `/scrim wheel mode:pause` pauses it, `/scrim end` stops it.",
+                ephemeral=True)
             return
         if s.lock.locked():
             await interaction.response.send_message("The wheel is still spinning.", ephemeral=True)
@@ -352,10 +365,15 @@ class ScrimManager:
             self.save()
             await self.refresh_board(s)
 
-        if mode == "automatic":
+        if mode in ("automatic", "continue"):
+            word = "Resuming the automatic draw" if mode == "continue" else "🎡 Automatic draw"
             await interaction.response.send_message(
-                f"🎡 Automatic draw: spinning until the teams are full, {AUTO_GAP}s between picks.")
-            s.auto = asyncio.create_task(self.auto_draw(s))
+                f"{word}: spinning until the teams are full, {AUTO_GAP}s between picks. "
+                f"`/scrim wheel mode:pause` pauses it.")
+            s.pausing = False
+            # picks go out as replies to this command (followups), which may carry the GIF even where Horaya
+            # has no Attach Files permission; plain channel messages can't
+            s.auto = asyncio.create_task(self.auto_draw(s, interaction.followup.send))
             return
 
         await interaction.response.defer(thinking=True)
@@ -365,19 +383,22 @@ class ScrimManager:
             log.exception("Scrim spin failed")
             await interaction.followup.send("The wheel broke, try again.", ephemeral=True)
 
-    async def auto_draw(self, s: Scrim) -> None:
-        ch = self.channel(s)
+    async def auto_draw(self, s: Scrim, send) -> None:
         try:
-            while s.next_team() is not None and self.scrims.get(s.guild_id) is s:
-                await self.spin(s, ch.send)
-                if s.next_team() is not None:
+            while not s.pausing and s.next_team() is not None and self.scrims.get(s.guild_id) is s:
+                await self.spin(s, send)
+                if s.next_team() is not None and not s.pausing:
                     await asyncio.sleep(AUTO_GAP)
         except asyncio.CancelledError:
             raise
         except Exception:
             log.exception("Automatic scrim draw failed")
-            if ch:
-                await ch.send("The automatic draw broke. Run `/scrim wheel` to carry on.")
+            try:
+                await send("The automatic draw broke. Run `/scrim wheel` to carry on.")
+            except discord.HTTPException:
+                pass
+        finally:
+            s.pausing = False
 
     def prepare(self, s: Scrim) -> None:
         """Draw the next spin in the background now, so `/scrim wheel` doesn't sit on "thinking" while it renders."""
@@ -443,39 +464,35 @@ class ScrimManager:
                     if render is None:
                         render = asyncio.to_thread(wheel.render_spin, [p["label"] for p in order], winner, team,
                                                    pick_no)
-                    gif, png, seconds = await render
+                    gif, _, seconds = await render
                 except Exception:
                     log.exception("Wheel render failed, revealing without it")
                     await send(content=f"{head}: 🎲 rolling...", embed=reveal, allowed_mentions=quiet)
                 else:
-                    # interaction followups and channel.send both hand back the message
                     msg = await send(content=f"{head} - spinning...", file=discord.File(io.BytesIO(gif), "wheel.gif"))
                     if not done:
                         self.prepare(s)  # draw the next spin while this one plays
-                    await asyncio.sleep(seconds + 0.5)
-                    # swap the GIF for a still of where it stopped, so a client that loops GIFs doesn't spin it again
-                    reveal.set_image(url="attachment://wheel.png")
-                    await msg.edit(content=head, embed=reveal, allowed_mentions=quiet,
-                                   attachments=[discord.File(io.BytesIO(png), "wheel.png")])
+                    # the GIF only starts once phones have downloaded it, so give them a moment before the reveal
+                    await asyncio.sleep(seconds + 1.5)
+                    # the GIF stays as it is: its last frame (winner lit) is held for 10 minutes. Swapping it for
+                    # a still image made Discord flash the old GIF back for a moment.
+                    await msg.edit(content=head, embed=reveal, allowed_mentions=quiet)
         if self.scrims.get(s.guild_id) is not s:
             return  # ended while it was spinning
         await self.refresh_board(s)
         if done:
-            await self.final(s)
+            await self.final(s, send)
         else:
             self.prepare(s)  # no-op if it's already drawn for this wheel
 
-    async def final(self, s: Scrim) -> None:
+    async def final(self, s: Scrim, send) -> None:
         """The only message that pings: both teams listed, everyone picked gets a ping."""
-        ch = self.channel(s)
-        if ch is None:
-            return
         text = f"🏁 **Final teams** - GLHF!\n\n{teams_text(s)}"
         if s.pool:
             text += "\n\n🪑 **Bench**: " + " ".join(f"<@{p['id']}>" for p in s.pool)
         picked = [discord.Object(p["id"]) for p in s.blue + s.red]
-        await ch.send(content=text[:2000],
-                      allowed_mentions=discord.AllowedMentions(users=picked, roles=False, everyone=False))
+        await send(content=text[:2000],
+                   allowed_mentions=discord.AllowedMentions(users=picked, roles=False, everyone=False))
 
 
 def setup(client: discord.Client, tree: app_commands.CommandTree, owner_id: int, state_file: str) -> ScrimManager:
@@ -488,9 +505,11 @@ def setup(client: discord.Client, tree: app_commands.CommandTree, owner_id: int,
         await manager.start(interaction)
 
     @group.command(name="wheel", description="Spin the wheel for the next pick")
-    @app_commands.describe(mode="one pick (default), automatic until the teams are full, or reroll the last pick")
+    @app_commands.describe(mode="one pick (default), automatic, pause or continue an automatic draw, or reroll")
     @app_commands.choices(mode=[app_commands.Choice(name="one pick", value="one"),
                                 app_commands.Choice(name="automatic", value="automatic"),
+                                app_commands.Choice(name="pause automatic", value="pause"),
+                                app_commands.Choice(name="continue automatic", value="continue"),
                                 app_commands.Choice(name="reroll last pick", value="reroll")])
     async def spin(interaction: discord.Interaction, mode: app_commands.Choice[str] | None = None):
         await manager.wheel(interaction, mode.value if mode else "one")
