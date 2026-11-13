@@ -25,11 +25,14 @@ A second copy, **Horaya 2**, runs on another host as a backup so the voice chann
 - Fewer than 10 players is fine; the teams just come out uneven.
 - Picks are fully random (`random.SystemRandom`). The scrim survives a restart (`scrim_state.json`).
 
-### Explain (AI, owner only)
+### Explain and answer (AI, owner only)
 - Ping Horaya with the word `explain` while replying to a message, and she explains its slang or references in a few
   sentences.
 - Put a word in quotes (`@Horaya explain "instalment"`) to explain just that word. Any other words after `explain`
   are a question about the message ("explain what they meant").
+- `@Horaya answer` replying to a message answers the question in it instead of explaining it.
+  `@Horaya answer <question>` answers a question typed right there. If both words are in a message, the first one wins.
+  She can't look things up, so for news, prices or live info she says her answer may be out of date.
 - Anyone else gets "Sorry, i only serve rara".
 - Answers come from Claude Haiku through headless Claude Code on the owner's Claude plan, with no tools enabled.
 
