@@ -17,6 +17,7 @@ SLICE_COLORS = ["#f4b400", "#7e57c2", "#26a69a", "#ef6c00", "#42a5f5", "#ec407a"
 TEAM_COLORS = {"blue": "#2f80ed", "red": "#eb4d4b"}
 BG = "#1e1f22"
 LABEL_MAX = 12
+HOLD_SECONDS = 6  # the GIF shows the stopped wheel this long after the spin, so it never loops before the swap
 
 _fonts: dict[int, ImageFont.FreeTypeFont] = {}
 _drawable: dict[str, bool] = {}
@@ -167,13 +168,25 @@ def render_spin(labels: list[str], winner: int, team: str, pick_no: int,
         frames.append(fast_frame(start + rot) if fast else quantize(_frame(base, wheel, top, start + rot)))
         durations.append(step_ms)
         last = rot
+    spin_seconds = sum(durations) / 1000
     still = _frame(base, _flat(_wheel(labels, lit=winner)), top, start + total)
-    frames.append(quantize(still))
-    durations.append(600_000)  # hold the result for 10 minutes in case a client loops the GIF anyway
+    # Discord ignores a long last-frame delay and loops the GIF, so the wheel would start spinning again
+    # before the bot swaps in the still. Instead the GIF ends with HOLD_SECONDS of real frames of the result
+    # (one corner pixel flickers between two near-identical colours so the encoder can't merge them).
+    lit = quantize(still)
+    corner = lit.getpixel((0, 0))
+    pal = lit.getpalette()[: 3 * 256]
+    colors = [tuple(pal[i:i + 3]) for i in range(0, len(pal), 3)]
+    near = min((i for i in range(len(colors)) if i != corner),
+               key=lambda i: sum((a - b) ** 2 for a, b in zip(colors[i], colors[corner])))
+    for i in range(int(HOLD_SECONDS * 10)):
+        f = lit.copy()
+        f.putpixel((0, 0), corner if i % 2 == 0 else near)
+        frames.append(f)
+        durations.append(100)
 
-    quantized = frames
     gif = io.BytesIO()
-    quantized[0].save(gif, format="GIF", save_all=True, append_images=quantized[1:], duration=durations, loop=0)
+    frames[0].save(gif, format="GIF", save_all=True, append_images=frames[1:], duration=durations, loop=0)
     png = io.BytesIO()
     still.save(png, format="PNG")
-    return gif.getvalue(), png.getvalue(), sum(durations[:-1]) / 1000
+    return gif.getvalue(), png.getvalue(), spin_seconds
