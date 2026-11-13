@@ -179,14 +179,16 @@ def render_spin(labels: list[str], winner: int, team: str, pick_no: int,
     colors = [tuple(pal[i:i + 3]) for i in range(0, len(pal), 3)]
     near = min((i for i in range(len(colors)) if i != corner),
                key=lambda i: sum((a - b) ** 2 for a, b in zip(colors[i], colors[corner])))
-    for i in range(int(HOLD_SECONDS * 10)):
+    for i in range(int(HOLD_SECONDS * 2)):
         f = lit.copy()
         f.putpixel((0, 0), corner if i % 2 == 0 else near)
         frames.append(f)
-        durations.append(100)
+        durations.append(500)
 
     gif = io.BytesIO()
-    frames[0].save(gif, format="GIF", save_all=True, append_images=frames[1:], duration=durations, loop=0)
+    # optimize=False skips Pillow's extra size pass, which was most of the CPU (free hosts stop busy servers)
+    frames[0].save(gif, format="GIF", save_all=True, append_images=frames[1:], duration=durations, loop=0,
+                   optimize=False)
     png = io.BytesIO()
     still.save(png, format="PNG")
     return gif.getvalue(), png.getvalue(), spin_seconds
