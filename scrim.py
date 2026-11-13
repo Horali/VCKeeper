@@ -442,6 +442,7 @@ class ScrimManager:
                 winner = rng.randrange(len(order))
                 render = None
             player = order[winner]
+            teams_before = teams_text(s)  # shown while it spins, so the card doesn't give the winner away
             s.pool.remove(player)
             s.team(team).append(player)
             s.last = {"id": player["id"], "team": team}
@@ -464,19 +465,27 @@ class ScrimManager:
                     if render is None:
                         render = asyncio.to_thread(wheel.render_spin, [p["label"] for p in order], winner, team,
                                                    pick_no)
-                    gif, _, seconds = await render
+                    gif, png, seconds = await render
                 except Exception:
                     log.exception("Wheel render failed, revealing without it")
                     await send(content=f"{head}: 🎲 rolling...", embed=reveal, allowed_mentions=quiet)
                 else:
-                    msg = await send(content=f"{head} - spinning...", file=discord.File(io.BytesIO(gif), "wheel.gif"))
+                    # the spinning GIF sits inside the same card the reveal uses, so the reveal only changes the
+                    # card's text and picture instead of moving things around
+                    spinning = discord.Embed(color=COLOR[team],
+                                             description=f"🎡 Spinning for **{team.title()}**...\n\n{teams_before}")
+                    spinning.set_image(url="attachment://wheel.gif")
+                    spinning.set_footer(text=f"{len(order)} in the wheel")
+                    msg = await send(content=head, embed=spinning, allowed_mentions=quiet,
+                                     file=discord.File(io.BytesIO(gif), "wheel.gif"))
                     if not done:
                         self.prepare(s)  # draw the next spin while this one plays
                     # the GIF only starts once phones have downloaded it, so give them a moment before the reveal
                     await asyncio.sleep(seconds + 1.5)
-                    # the GIF stays as it is: its last frame (winner lit) is held for 10 minutes. Swapping it for
-                    # a still image made Discord flash the old GIF back for a moment.
-                    await msg.edit(content=head, embed=reveal, allowed_mentions=quiet)
+                    # swap the GIF for a still of where it stopped: Discord loops GIFs, so it would keep spinning
+                    reveal.set_image(url="attachment://wheel.png")
+                    await msg.edit(content=head, embed=reveal, allowed_mentions=quiet,
+                                   attachments=[discord.File(io.BytesIO(png), "wheel.png")])
         if self.scrims.get(s.guild_id) is not s:
             return  # ended while it was spinning
         await self.refresh_board(s)
