@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import datetime
 import hashlib
 import json
@@ -149,6 +150,22 @@ def find_claude() -> None:
 
 class ExplainError(Exception):
     pass
+
+
+@contextlib.asynccontextmanager
+async def typing_if_possible(channel):
+    """Show "Horaya is typing..." while she thinks, but if Discord refuses (a rate limit), think and reply anyway."""
+    typing = channel.typing()
+    try:
+        await typing.__aenter__()
+    except discord.HTTPException as e:
+        log.warning("Could not show typing (%s %s); replying without it", e.status, type(e).__name__)
+        yield
+        return
+    try:
+        yield
+    finally:
+        await typing.__aexit__(None, None, None)
 
 
 def profile_name(user) -> str:
@@ -422,7 +439,7 @@ class VCBot(discord.Client):
             task += f'\nHora also asked: "{question}". Answer that as part of the explanation.'
         prompt = EXPLAIN_PROMPT.format(hora=profile_name(message.author), context=context, task=task)
 
-        async with message.channel.typing():
+        async with typing_if_possible(message.channel):
             try:
                 answer = await self.ask_claude(prompt)
             except ExplainError as e:
@@ -454,7 +471,7 @@ class VCBot(discord.Client):
             return
         prompt = ANSWER_PROMPT.format(hora=profile_name(message.author), context=context, task=task)
 
-        async with message.channel.typing():
+        async with typing_if_possible(message.channel):
             try:
                 reply = await self.ask_claude(prompt)
             except ExplainError as e:
